@@ -49,9 +49,11 @@ class ExchangeCL2(ExchangeCL):
         # self.rho_dn_list = []
         self.rho_up = self.Gup.get_density_matrix()
         self.rho_dn = self.Gdn.get_density_matrix()
+        self.Jorb_full_list = defaultdict(lambda: defaultdict(lambda: []))
         self.Jorb_list = defaultdict(lambda: [])
         self.JJ_list = defaultdict(lambda: [])
         self.JJ = defaultdict(lambda: 0.0j)
+        self.Jorb_full = defaultdict(lambda: defaultdict(lambda: 0.0j))
         self.Jorb = defaultdict(lambda: 0.0j)
         self.HR0_up = self.Gup.H0
         self.HR0_dn = self.Gdn.H0
@@ -64,6 +66,7 @@ class ExchangeCL2(ExchangeCL):
 
         self.exchange_Jdict = {}
         self.Jiso_orb = {}
+        self.Jiso_orb_full = {}
 
         self.biquadratic = False
 
@@ -149,6 +152,7 @@ class ExchangeCL2(ExchangeCL):
         :param de: energy step.
         """
         Rij_done = set()
+        Jorb_full_list = dict()
         Jorb_list = dict()
         JJ_list = dict()
         for R, ijpairs in self.R_ijatom_dict.items():
@@ -159,8 +163,27 @@ class ExchangeCL2(ExchangeCL):
                         raise KeyError(
                             f"Strange (Rm, jatom, iatom) has already been calculated! {(Rm, jatom, iatom)}"
                         )
+                    
                     Gij_up = self.GR_atom(Gup[R], iatom, jatom)
                     Gji_dn = self.GR_atom(Gdn[Rm], jatom, iatom)
+                    
+                    Del_i, Del_j = self.get_Delta(iatom), self.get_Delta(jatom)
+                    
+                    d_tmp, d_tmp_t = dict(), dict()
+                    tmp_exch = 0.0j
+                    for m0 in range(Del_i.shape[0]):
+                        for m1 in range(Del_j.shape[0]):
+                            for m2 in range(Del_i.shape[1]):
+                                for m3 in range(Del_j.shape[1]):
+                                    
+                                    tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m2,m3] * Gji_dn[m3,m0]
+                                    # tmp_exch = Del_i[m1,m0] * Gij_up[m0,m2] * Del_j[m2,m3] * Gji_dn[m3,m1] # Iryan
+                                    # tmp_exch = Del_i[m0,m2] * Gij_up[m2,m1] * Del_j[m1,m3] * Gji_dn[m3,m0]
+                                    
+                                    tmp_exch = tmp_exch / (4.0 * np.pi)
+                                    d_tmp[(m0, m1, m2, m3)] = tmp_exch
+                                    d_tmp_t[(m2, m3, m0, m1)] = tmp_exch
+                    
                     tmp = 0.0j
                     # t = self.get_Delta(iatom) @ Gij_up @ self.get_Delta(jatom) @ Gji_dn
                     t = np.einsum(
@@ -169,14 +192,17 @@ class ExchangeCL2(ExchangeCL):
                         np.matmul(self.get_Delta(jatom), Gji_dn),
                     )
                     tmp = np.sum(t)
+                    
+                    Jorb_full_list[(R, iatom, jatom)] = d_tmp
                     Jorb_list[(R, iatom, jatom)] = t / (4.0 * np.pi)
                     JJ_list[(R, iatom, jatom)] = tmp / (4.0 * np.pi)
                     Rij_done.add((R, iatom, jatom))
                     if (Rm, jatom, iatom) not in Rij_done:
+                        Jorb_full_list[(Rm, jatom, iatom)] = d_tmp_t
                         Jorb_list[(Rm, jatom, iatom)] = t.T / (4.0 * np.pi)
                         JJ_list[(Rm, jatom, iatom)] = tmp / (4.0 * np.pi)
                         Rij_done.add((Rm, jatom, iatom))
-        return Jorb_list, JJ_list
+        return Jorb_full_list, Jorb_list, JJ_list
 
     def A_to_Jtensor(self):
         for key, val in self.JJ.items():
@@ -190,11 +216,16 @@ class ExchangeCL2(ExchangeCL):
             Jorbij = np.imag(self.Jorb[key]) / np.sign(
                 np.dot(self.spinat[iatom], self.spinat[jatom])
             )
-            if is_nonself:
+            Jorbij_full = dict()
+            for jokey, joval in self.Jorb_full[key].items():
+                Jorbij_full[jokey] = np.imag(joval)
+            if True:
+            # if is_nonself:
                 self.exchange_Jdict[keyspin] = Jij
                 self.Jiso_orb[keyspin] = self.simplify_orbital_contributions(
                     Jorbij, iatom, jatom
                 )
+                self.Jiso_orb_full[keyspin] = Jorbij_full.copy()
 
     def get_rho_e(self, rho_up, rho_dn):
         # self.rho_up_list.append(-1.0 / np.pi * np.imag(rho_up[(0,0,0)]))
@@ -236,6 +267,10 @@ class ExchangeCL2(ExchangeCL):
                 # self.JJ[(R, iatom, jatom)] = integrate(
                 #    self.contour.path, self.JJ_list[(R, iatom, jatom)]
                 # )
+                for jokey, joval in self.Jorb_full_list[(R, iatom, jatom)].items():
+                    self.Jorb_full[(R, iatom, jatom)][jokey] = self.contour.integrate_values(
+                        joval
+                    )
                 self.Jorb[(R, iatom, jatom)] = self.contour.integrate_values(
                     self.Jorb_list[(R, iatom, jatom)]
                 )
@@ -246,8 +281,8 @@ class ExchangeCL2(ExchangeCL):
     def get_quantities_per_e(self, e):
         GR_up = self.Gup.get_GR(self.short_Rlist, energy=e, get_rho=False)
         GR_dn = self.Gdn.get_GR(self.short_Rlist, energy=e, get_rho=False)
-        Jorb_list, JJ_list = self.get_all_A(GR_up, GR_dn)
-        return dict(Jorb_list=Jorb_list, JJ_list=JJ_list)
+        Jorb_full_list, Jorb_list, JJ_list = self.get_all_A(GR_up, GR_dn)
+        return dict(Jorb_full_list=Jorb_full_list, Jorb_list=Jorb_list, JJ_list=JJ_list)
 
     def calculate_all(self):
         """
@@ -267,11 +302,14 @@ class ExchangeCL2(ExchangeCL):
                 self.get_quantities_per_e, self.contour.path, num_cpus=self.nproc
             )
         for i, result in enumerate(results):
+            Jorb_full_list = result["Jorb_full_list"]
             Jorb_list = result["Jorb_list"]
             JJ_list = result["JJ_list"]
             for iR, R in enumerate(self.R_ijatom_dict):
                 for iatom, jatom in self.R_ijatom_dict[R]:
                     key = (R, iatom, jatom)
+                    for jokey,joval in Jorb_full_list[key].items():
+                        self.Jorb_full_list[key][jokey].append(joval)
                     self.Jorb_list[key].append(Jorb_list[key])
                     self.JJ_list[key].append(JJ_list[key])
         self.integrate()
@@ -290,6 +328,7 @@ class ExchangeCL2(ExchangeCL):
             distance_dict=self.distance_dict,
             exchange_Jdict=self.exchange_Jdict,
             Jiso_orb=self.Jiso_orb,
+            Jiso_orb_full=self.Jiso_orb_full,
             dmi_ddict=None,
             NJT_Jdict=None,
             NJT_ddict=None,
