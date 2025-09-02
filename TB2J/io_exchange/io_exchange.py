@@ -8,12 +8,15 @@ write not only xml output.
 - tom's asd inputs.
 """
 
-# matplotlib.use("Agg")
-import gc
 import os
 import pickle
 from collections.abc import Iterable
 from datetime import datetime
+
+import matplotlib
+
+# matplotlib.use("Agg")
+import gc
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,6 +41,7 @@ class SpinIO(object):
         distance_dict=None,
         exchange_Jdict=None,
         Jiso_orb=None,
+        Jiso_orb_full=None,
         DMI_orb=None,
         Jani_orb=None,
         dJdx=None,
@@ -64,6 +68,7 @@ class SpinIO(object):
         :param distance_dict: {(R, i,j ): distance} , here i and j are spin indices
         :param exchange_Jdict: {(R, i,j): J}
         :param Jiso_orb: {(R, i,j): J_orb}
+        :param Jiso_orb_full: {(R, i,j): {(m0,m1,m2,m3): J_orb_full}}
         :param DMI_orb: {(R, i,j): D_orb}
         :param Jani_orb: {(R, i,j): Jani_orb}
         :param dJdx: {(R, i,j): dJdx}
@@ -111,6 +116,7 @@ class SpinIO(object):
             self.exchange_Jdict = None
 
         self.Jiso_orb = Jiso_orb
+        self.Jiso_orb_full = Jiso_orb_full
 
         self.DMI_orb = DMI_orb
         self.Jani_orb = Jani_orb
