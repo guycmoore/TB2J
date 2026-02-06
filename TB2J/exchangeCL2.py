@@ -177,8 +177,7 @@ class ExchangeCL2(ExchangeCL):
                                 for m3 in range(Del_j.shape[1]):
                                     
                                     tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m2,m3] * Gji_dn[m3,m0]
-                                    # tmp_exch = Del_i[m1,m0] * Gij_up[m0,m2] * Del_j[m2,m3] * Gji_dn[m3,m1] # Iryan
-                                    # tmp_exch = Del_i[m0,m2] * Gij_up[m2,m1] * Del_j[m1,m3] * Gji_dn[m3,m0]
+                                    # tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m3,m2] * Gji_dn[m0,m3]
                                     
                                     tmp_exch = tmp_exch / (4.0 * np.pi)
                                     d_tmp[(m0, m1, m2, m3)] = tmp_exch
