@@ -12,8 +12,9 @@ from TB2J.external import p_map
 from TB2J.green import TBGreen
 from TB2J.io_exchange import SpinIO
 
-from .exchange import ExchangeCL
+from TB2J.multipoles import mu_matrix_real
 
+from .exchange import ExchangeCL
 
 class ExchangeCL2(ExchangeCL):
     def set_tbmodels(self, tbmodels):
@@ -155,6 +156,30 @@ class ExchangeCL2(ExchangeCL):
         Jorb_full_list = dict()
         Jorb_list = dict()
         JJ_list = dict()
+
+
+        ##
+        
+        # HACK: Hard coded
+        l = 2
+        n_orb = 5
+        n_mu = n_orb * n_orb
+        
+        # Transform from Wannier90 to standard convention
+        pindx     = [4, 2, 0, 1, 3]
+        pindx_inv = [2, 3, 1, 4, 0]
+        
+        # Cache mu matrices (in W90 ordering) to avoid regenerating each time
+        mu_cache = {}  # key: (k,q) -> (n_orb,n_orb) complex128
+        for k in range(0, 2*l + 1):
+            for q in range(-k, k + 1):
+                mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
+                # transform to W90 convention
+                mu = mu[np.ix_(pindx_inv, pindx_inv)]
+                mu_cache[(k, q)] = mu
+        
+        ##
+        
         for R, ijpairs in self.R_ijatom_dict.items():
             for iatom, jatom in ijpairs:
                 if (R, iatom, jatom) not in Rij_done:
@@ -171,17 +196,103 @@ class ExchangeCL2(ExchangeCL):
                     
                     d_tmp, d_tmp_t = dict(), dict()
                     tmp_exch = 0.0j
-                    for m0 in range(Del_i.shape[0]):
-                        for m1 in range(Del_j.shape[0]):
-                            for m2 in range(Del_i.shape[1]):
-                                for m3 in range(Del_j.shape[1]):
+
+                    ####
+                    ####
+
+                    # # --- fast multipole-projected MFT block (drop-in replacement for nested loops)
+                    
+                    # n_orb = Del_i.shape[0]
+                    # l = (n_orb - 1) // 2
+                    # n_mu = n_orb * n_orb
+                    
+                    # # build U_mu once per l (ideally cache this outside energy/pair loops)
+                    # mu_keys = []                       # row -> (k, q)
+                    # u_mu = np.zeros((n_mu, n_mu), dtype=np.complex128)
+                    
+                    # row = 0
+                    # for k in range(0, 2*l + 1):
+                    #     for q in range(-k, k + 1):
+                    #         mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
+                    
+                    #         # transform to Wannier90 convention (your permutation)
+                    #         mu = mu[np.ix_(pindx_inv, pindx_inv)]
+                    
+                    #         # vec in Fortran order so vec(A M B) = (B^T ⊗ A) vec(M)
+                    #         u_mu[row, :] = mu.reshape(n_mu, order="F")
+                    #         mu_keys.append((k, q))
+                    #         row += 1
+                    
+                    # # core: J_mu = Tr[ mu_i Del_i G_up mu_j Del_j G_dn ] for all (i,j) at once
+                    # a = Del_i @ Gij_up
+                    # b = Del_j @ Gji_dn
+                    # s_super = np.kron(b.T, a)                       # (n_mu, n_mu)
+                    # j_mu = (u_mu @ s_super) @ u_mu.conj().T
+                    # j_mu *= (1.0 / (4.0 * np.pi))
+                    
+                    # # now store into your dict in the same style as before:
+                    # key_to_row = {kq: idx for idx, kq in enumerate(mu_keys)}
+                    # for (k_i, q_i) in mu_keys:
+                    #     ri = key_to_row[(k_i, q_i)]
+                    #     for (k_j, q_j) in mu_keys:
+                    #         rj = key_to_row[(k_j, q_j)]
+                    #         d_tmp[(k_i, q_i, k_j, q_j)] = j_mu[ri, rj]
+                    #         d_tmp[(k_j, q_j, k_i, q_i)] = j_mu[rj, ri]
+                    
+                    # # (optional) if you want reciprocity symmetry:
+                    # # d_tmp[(k_j, q_j, k_i, q_i)] = j_mu[rj, ri]
+                    
+                    ####
+                    ####
+                    
+                    # --- brute-force-ish multipole MFT (drop-in replacement, but less wasteful)
+                    
+                    # n_orb = Del_i.shape[0]
+                    # l = (n_orb - 1) // 2
+                    
+                    # Precompute the "core" products once
+                    a = Del_i @ Gij_up
+                    b = Del_j @ Gji_dn
+                    
+                    # # Cache mu matrices (in W90 ordering) to avoid regenerating each time
+                    # mu_cache = {}  # key: (k,q) -> (n_orb,n_orb) complex128
+                    # for k in range(0, 2*l + 1):
+                    #     for q in range(-k, k + 1):
+                    #         mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
+                    #         # transform to W90 convention
+                    #         mu = mu[np.ix_(pindx_inv, pindx_inv)]
+                    #         mu_cache[(k, q)] = mu
+                    
+                    # Compute exchange in multipole basis via brute-force loops
+                    for k_i in range(0, 2*l + 1):
+                        for q_i in range(-k_i, k_i + 1):
+                            mu_i = mu_cache[(k_i, q_i)]
+                            
+                            for k_j in range(0, 2*l + 1):
+                                for q_j in range(-k_j, k_j + 1):
+                                    mu_j = mu_cache[(k_j, q_j)]
                                     
-                                    tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m2,m3] * Gji_dn[m3,m0]
-                                    # tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m3,m2] * Gji_dn[m0,m3]
+                                    # Tr[ mu_i * (Del_i G_up) * mu_j * (Del_j G_dn) ]
+                                    tmp_exch = np.trace(mu_i @ a @ mu_j @ b) / (4.0 * np.pi)
                                     
-                                    tmp_exch = tmp_exch / (4.0 * np.pi)
-                                    d_tmp[(m0, m1, m2, m3)] = tmp_exch
-                                    d_tmp_t[(m2, m3, m0, m1)] = tmp_exch
+                                    d_tmp[(k_i, q_i, k_j, q_j)] = tmp_exch
+                                    # If you want explicit symmetry fill (optional):
+                                    d_tmp[(k_j, q_j, k_i, q_i)] = tmp_exch
+                    
+                    ####
+                    ####
+                    
+                    # for m0 in range(Del_i.shape[0]):
+                    #     for m1 in range(Del_j.shape[0]):
+                    #         for m2 in range(Del_i.shape[1]):
+                    #             for m3 in range(Del_j.shape[1]):
+                    #                 tmp_exch = Del_i[m0,m1] * Gij_up[m1,m2] * Del_j[m2,m3] * Gji_dn[m3,m0]
+                    #                 tmp_exch = tmp_exch / (4.0 * np.pi)
+                    #                 d_tmp[(m0, m1, m2, m3)] = tmp_exch
+                    #                 d_tmp_t[(m2, m3, m0, m1)] = tmp_exch
+
+                    ####
+                    ####
                     
                     tmp = 0.0j
                     # t = self.get_Delta(iatom) @ Gij_up @ self.get_Delta(jatom) @ Gji_dn
