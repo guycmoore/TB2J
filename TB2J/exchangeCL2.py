@@ -167,7 +167,8 @@ class ExchangeCL2(ExchangeCL):
         
         # Transform from Wannier90 to standard convention
         pindx     = [4, 2, 0, 1, 3]
-        pindx_inv = [2, 3, 1, 4, 0]
+        # pindx_inv = [2, 3, 1, 4, 0]
+        pindx_inv = np.argsort(pindx)
         
         # Cache mu matrices (in W90 ordering) to avoid regenerating each time
         mu_cache = {}  # key: (k,q) -> (n_orb,n_orb) complex128
@@ -276,8 +277,9 @@ class ExchangeCL2(ExchangeCL):
                                     tmp_exch = np.trace(mu_i @ a @ mu_j @ b) / (4.0 * np.pi)
                                     
                                     d_tmp[(k_i, q_i, k_j, q_j)] = tmp_exch
-                                    # If you want explicit symmetry fill (optional):
-                                    d_tmp[(k_j, q_j, k_i, q_i)] = tmp_exch
+                                    
+                                    # d_tmp_t[(k_j, q_j, k_i, q_i)] = np.conj(tmp_exch)
+                                    d_tmp_t[(k_j, q_j, k_i, q_i)] = tmp_exch
                     
                     ####
                     ####
