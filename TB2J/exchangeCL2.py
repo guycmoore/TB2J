@@ -159,13 +159,16 @@ class ExchangeCL2(ExchangeCL):
 
 
         ##
+
+        print("HACK: Projecting onto multipoles...")
+
+        # FIXME: Hard coded
         
-        n_orb = Del_i.shape[0]
+        n_orb = 5
         l = (n_orb - 1) // 2
         n_mu = n_orb * n_orb
         
         # Transform from Wannier90 to standard convention
-        # FIXME: Hard coded
         pindx     = [4, 2, 0, 1, 3]
         # pindx_inv = [2, 3, 1, 4, 0]
         pindx_inv = np.argsort(pindx)
@@ -202,10 +205,9 @@ class ExchangeCL2(ExchangeCL):
 
                     # --- multipole MFT kernel consistent with projected Delta^{kq}
                     # J_{ij}^{kq,k'q'} ~ (1/4pi) * Tr[ Delta_i^{kq} Gij_up Delta_j^{k'q'} Gji_dn ]
-                    # (Im / energy integral handled outside this block as in your workflow)
+                    # (Im / energy integral handled outside this block)
 
-                    # Optional: cache projected Delta^{kq} to avoid recomputation in inner loops
-                    # Using your current convention: Delta^{kq} = Tr(mu * Delta) * mu
+                    # Using current convention: Delta^{kq} = Tr(mu * Delta) * mu
                     Delta_i_kq = {}
                     Delta_j_kq = {}
 
@@ -235,7 +237,7 @@ class ExchangeCL2(ExchangeCL):
 
                                     d_tmp[(k_i, q_i, k_j, q_j)] = tmp_exch
 
-                                    # Keep your transpose map behavior
+                                    # Keep transpose map behavior
                                     # d_tmp_t[(k_j, q_j, k_i, q_i)] = np.conj(tmp_exch)
                                     d_tmp_t[(k_j, q_j, k_i, q_i)] = tmp_exch
                     
