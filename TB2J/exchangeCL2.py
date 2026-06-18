@@ -160,7 +160,7 @@ class ExchangeCL2(ExchangeCL):
 
         ##
 
-        print("HACK: Projecting onto multipoles...")
+        print("HACK: Projecting onto multipoles (normalized)...")
 
         # FIXME: Hard coded
         
@@ -214,13 +214,19 @@ class ExchangeCL2(ExchangeCL):
                     for k_i in range(0, 2 * l + 1):
                         for q_i in range(-k_i, k_i + 1):
                             mu_i = mu_cache[(k_i, q_i)]
-                            c_i = np.trace(mu_i @ Del_i)          # scalar projection coefficient
-                            Delta_i_kq[(k_i, q_i)] = c_i * mu_i   # projected matrix
+                            
+                            # c_i = np.trace(mu_i @ Del_i)
+                            c_i = np.trace(mu_i.conj().T @ Del_i) / np.trace(mu_i.conj().T @ mu_i)
+                            
+                            Delta_i_kq[(k_i, q_i)] = c_i * mu_i
 
                     for k_j in range(0, 2 * l + 1):
                         for q_j in range(-k_j, k_j + 1):
                             mu_j = mu_cache[(k_j, q_j)]
-                            c_j = np.trace(mu_j @ Del_j)
+                            
+                            # c_j = np.trace(mu_j @ Del_j)
+                            c_j = np.trace(mu_j.conj().T @ Del_j) / np.trace(mu_j.conj().T @ mu_j)
+                            
                             Delta_j_kq[(k_j, q_j)] = c_j * mu_j
 
                     # Compute multipole-resolved exchange kernel
