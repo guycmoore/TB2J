@@ -160,12 +160,12 @@ class ExchangeCL2(ExchangeCL):
 
         ##
         
-        # HACK: Hard coded
-        l = 2
-        n_orb = 5
+        n_orb = Del_i.shape[0]
+        l = (n_orb - 1) // 2
         n_mu = n_orb * n_orb
         
         # Transform from Wannier90 to standard convention
+        # FIXME: Hard coded
         pindx     = [4, 2, 0, 1, 3]
         # pindx_inv = [2, 3, 1, 4, 0]
         pindx_inv = np.argsort(pindx)
@@ -175,8 +175,7 @@ class ExchangeCL2(ExchangeCL):
         for k in range(0, 2*l + 1):
             for q in range(-k, k + 1):
                 mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
-                # transform to W90 convention
-                mu = mu[np.ix_(pindx_inv, pindx_inv)]
+                mu = mu[np.ix_(pindx_inv, pindx_inv)] # transform to W90 convention
                 mu_cache[(k, q)] = mu
         
         ##
@@ -201,85 +200,70 @@ class ExchangeCL2(ExchangeCL):
                     ####
                     ####
 
-                    # # --- fast multipole-projected MFT block (drop-in replacement for nested loops)
-                    
-                    # n_orb = Del_i.shape[0]
-                    # l = (n_orb - 1) // 2
-                    # n_mu = n_orb * n_orb
-                    
-                    # # build U_mu once per l (ideally cache this outside energy/pair loops)
-                    # mu_keys = []                       # row -> (k, q)
-                    # u_mu = np.zeros((n_mu, n_mu), dtype=np.complex128)
-                    
-                    # row = 0
-                    # for k in range(0, 2*l + 1):
-                    #     for q in range(-k, k + 1):
-                    #         mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
-                    
-                    #         # transform to Wannier90 convention (your permutation)
-                    #         mu = mu[np.ix_(pindx_inv, pindx_inv)]
-                    
-                    #         # vec in Fortran order so vec(A M B) = (B^T ⊗ A) vec(M)
-                    #         u_mu[row, :] = mu.reshape(n_mu, order="F")
-                    #         mu_keys.append((k, q))
-                    #         row += 1
-                    
-                    # # core: J_mu = Tr[ mu_i Del_i G_up mu_j Del_j G_dn ] for all (i,j) at once
-                    # a = Del_i @ Gij_up
-                    # b = Del_j @ Gji_dn
-                    # s_super = np.kron(b.T, a)                       # (n_mu, n_mu)
-                    # j_mu = (u_mu @ s_super) @ u_mu.conj().T
-                    # j_mu *= (1.0 / (4.0 * np.pi))
-                    
-                    # # now store into your dict in the same style as before:
-                    # key_to_row = {kq: idx for idx, kq in enumerate(mu_keys)}
-                    # for (k_i, q_i) in mu_keys:
-                    #     ri = key_to_row[(k_i, q_i)]
-                    #     for (k_j, q_j) in mu_keys:
-                    #         rj = key_to_row[(k_j, q_j)]
-                    #         d_tmp[(k_i, q_i, k_j, q_j)] = j_mu[ri, rj]
-                    #         d_tmp[(k_j, q_j, k_i, q_i)] = j_mu[rj, ri]
-                    
-                    # # (optional) if you want reciprocity symmetry:
-                    # # d_tmp[(k_j, q_j, k_i, q_i)] = j_mu[rj, ri]
-                    
-                    ####
-                    ####
-                    
-                    # --- brute-force-ish multipole MFT (drop-in replacement, but less wasteful)
-                    
-                    # n_orb = Del_i.shape[0]
-                    # l = (n_orb - 1) // 2
-                    
-                    # Precompute the "core" products once
-                    a = Del_i @ Gij_up
-                    b = Del_j @ Gji_dn
-                    
-                    # # Cache mu matrices (in W90 ordering) to avoid regenerating each time
-                    # mu_cache = {}  # key: (k,q) -> (n_orb,n_orb) complex128
-                    # for k in range(0, 2*l + 1):
-                    #     for q in range(-k, k + 1):
-                    #         mu = np.array(mu_matrix_real(l, k, q, normalize=True), dtype=np.complex128)
-                    #         # transform to W90 convention
-                    #         mu = mu[np.ix_(pindx_inv, pindx_inv)]
-                    #         mu_cache[(k, q)] = mu
-                    
-                    # Compute exchange in multipole basis via brute-force loops
-                    for k_i in range(0, 2*l + 1):
+                    # --- multipole MFT kernel consistent with projected Delta^{kq}
+                    # J_{ij}^{kq,k'q'} ~ (1/4pi) * Tr[ Delta_i^{kq} Gij_up Delta_j^{k'q'} Gji_dn ]
+                    # (Im / energy integral handled outside this block as in your workflow)
+
+                    # Optional: cache projected Delta^{kq} to avoid recomputation in inner loops
+                    # Using your current convention: Delta^{kq} = Tr(mu * Delta) * mu
+                    Delta_i_kq = {}
+                    Delta_j_kq = {}
+
+                    for k_i in range(0, 2 * l + 1):
                         for q_i in range(-k_i, k_i + 1):
                             mu_i = mu_cache[(k_i, q_i)]
-                            
-                            for k_j in range(0, 2*l + 1):
+                            c_i = np.trace(mu_i @ Del_i)          # scalar projection coefficient
+                            Delta_i_kq[(k_i, q_i)] = c_i * mu_i   # projected matrix
+
+                    for k_j in range(0, 2 * l + 1):
+                        for q_j in range(-k_j, k_j + 1):
+                            mu_j = mu_cache[(k_j, q_j)]
+                            c_j = np.trace(mu_j @ Del_j)
+                            Delta_j_kq[(k_j, q_j)] = c_j * mu_j
+
+                    # Compute multipole-resolved exchange kernel
+                    for k_i in range(0, 2 * l + 1):
+                        for q_i in range(-k_i, k_i + 1):
+                            Di_kq = Delta_i_kq[(k_i, q_i)]
+
+                            for k_j in range(0, 2 * l + 1):
                                 for q_j in range(-k_j, k_j + 1):
-                                    mu_j = mu_cache[(k_j, q_j)]
-                                    
-                                    # Tr[ mu_i * (Del_i G_up) * mu_j * (Del_j G_dn) ]
-                                    tmp_exch = np.trace(mu_i @ a @ mu_j @ b) / (4.0 * np.pi)
-                                    
+                                    Dj_kq = Delta_j_kq[(k_j, q_j)]
+
+                                    # Tr[ Delta_i^{kq} G_up Delta_j^{k'q'} G_dn ] / (4pi)
+                                    tmp_exch = np.trace(Di_kq @ Gij_up @ Dj_kq @ Gji_dn) / (4.0 * np.pi)
+
                                     d_tmp[(k_i, q_i, k_j, q_j)] = tmp_exch
-                                    
+
+                                    # Keep your transpose map behavior
                                     # d_tmp_t[(k_j, q_j, k_i, q_i)] = np.conj(tmp_exch)
                                     d_tmp_t[(k_j, q_j, k_i, q_i)] = tmp_exch
+                    
+                    ####
+                    ####
+                    
+                    # # Original (incorrect) multipolar MFT
+                    
+                    # # Precompute the "core" products once
+                    # a = Del_i @ Gij_up
+                    # b = Del_j @ Gji_dn
+                    
+                    # # Compute exchange in multipole basis via brute-force loops
+                    # for k_i in range(0, 2*l + 1):
+                    #     for q_i in range(-k_i, k_i + 1):
+                    #         mu_i = mu_cache[(k_i, q_i)]
+                            
+                    #         for k_j in range(0, 2*l + 1):
+                    #             for q_j in range(-k_j, k_j + 1):
+                    #                 mu_j = mu_cache[(k_j, q_j)]
+                                    
+                    #                 # Tr[ mu_i * (Del_i G_up) * mu_j * (Del_j G_dn) ]
+                    #                 tmp_exch = np.trace(mu_i @ a @ mu_j @ b) / (4.0 * np.pi)
+                                    
+                    #                 d_tmp[(k_i, q_i, k_j, q_j)] = tmp_exch
+                                    
+                    #                 # d_tmp_t[(k_j, q_j, k_i, q_i)] = np.conj(tmp_exch)
+                    #                 d_tmp_t[(k_j, q_j, k_i, q_i)] = tmp_exch
                     
                     ####
                     ####
